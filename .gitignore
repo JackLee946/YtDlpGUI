@@ -11,8 +11,6 @@ Release/
 *.user
 *.aps
 
-# Bundled third-party binaries (ffmpeg.exe is >100MB, exceeds GitHub limit)
-tools/
-
 # Packaged release archive
 *.zip
+!tools/**/*.zip
