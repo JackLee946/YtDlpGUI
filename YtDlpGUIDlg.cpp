@@ -235,9 +235,8 @@ BOOL CYtDlpGUIDlg::OnInitDialog()
 	m_cmbFormat.SetCurSel(app->GetProfileInt(kSection, L"Format", 0));
 	m_cmbCookies.SetCurSel(app->GetProfileInt(kSection, L"Cookies", 0));
 	m_cmbCount.SetCurSel(app->GetProfileInt(kSection, L"Count", 1));
-	// 站点勾选不记忆: 每次启动固定只勾选 YouTube
 	for (const auto& s : kSites)
-		CheckDlgButton(s.ctrlId, s.defaultOn ? BST_CHECKED : BST_UNCHECKED);
+		CheckDlgButton(s.ctrlId, app->GetProfileInt(kSection, s.regKey, s.defaultOn ? 1 : 0) ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_CHECK_NOPLAYLIST, app->GetProfileInt(kSection, L"NoPlaylist", 1) ? BST_CHECKED : BST_UNCHECKED);
 
 	UpdateButtons();
@@ -284,6 +283,8 @@ void CYtDlpGUIDlg::SaveSettings()
 	app->WriteProfileInt(kSection, L"Format", m_cmbFormat.GetCurSel());
 	app->WriteProfileInt(kSection, L"Cookies", m_cmbCookies.GetCurSel());
 	app->WriteProfileInt(kSection, L"Count", m_cmbCount.GetCurSel());
+	for (const auto& s : kSites)
+		app->WriteProfileInt(kSection, s.regKey, IsDlgButtonChecked(s.ctrlId) == BST_CHECKED ? 1 : 0);
 	app->WriteProfileInt(kSection, L"NoPlaylist", IsDlgButtonChecked(IDC_CHECK_NOPLAYLIST) == BST_CHECKED ? 1 : 0);
 }
 
