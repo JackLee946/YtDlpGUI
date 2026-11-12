@@ -9,6 +9,22 @@ namespace
 {
 	const wchar_t* kSection = L"Settings";
 
+	struct SiteDef { UINT ctrlId; const wchar_t* regKey; const wchar_t* prefix; bool defaultOn; };
+	const SiteDef kSites[] = {
+		{ IDC_CHECK_SITE_YT,   L"SiteYouTube",    L"ytsearch",   true  },
+		{ IDC_CHECK_SITE_BILI, L"SiteBilibili",   L"bilisearch", false },
+		{ IDC_CHECK_SITE_SC,   L"SiteSoundCloud", L"scsearch",   false },
+	};
+
+	CString SiteDisplayName(const CString& extractor)
+	{
+		CString e = extractor; e.MakeLower();
+		if (e.Find(L"youtube") >= 0)    return L"YouTube";
+		if (e.Find(L"bili") >= 0)       return L"Bilibili";
+		if (e.Find(L"soundcloud") >= 0) return L"SoundCloud";
+		return extractor;
+	}
+
 	struct RunJob
 	{
 		CString exe;
@@ -187,9 +203,10 @@ BOOL CYtDlpGUIDlg::OnInitDialog()
 	m_list.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_CHECKBOXES);
 	CRect rc; m_list.GetClientRect(&rc);
 	int w = rc.Width();
-	m_list.InsertColumn(0, L"标题", LVCFMT_LEFT, w * 55 / 100);
-	m_list.InsertColumn(1, L"时长", LVCFMT_LEFT, w * 12 / 100);
-	m_list.InsertColumn(2, L"链接", LVCFMT_LEFT, w * 30 / 100);
+	m_list.InsertColumn(0, L"标题", LVCFMT_LEFT, w * 46 / 100);
+	m_list.InsertColumn(1, L"时长", LVCFMT_LEFT, w * 10 / 100);
+	m_list.InsertColumn(2, L"链接", LVCFMT_LEFT, w * 26 / 100);
+	m_list.InsertColumn(3, L"来源", LVCFMT_LEFT, w * 14 / 100);
 
 	m_cmbFormat.AddString(L"最佳画质 (mp4)");
 	m_cmbFormat.AddString(L"最高 1080p (mp4)");
@@ -218,6 +235,9 @@ BOOL CYtDlpGUIDlg::OnInitDialog()
 	m_cmbFormat.SetCurSel(app->GetProfileInt(kSection, L"Format", 0));
 	m_cmbCookies.SetCurSel(app->GetProfileInt(kSection, L"Cookies", 0));
 	m_cmbCount.SetCurSel(app->GetProfileInt(kSection, L"Count", 1));
+	// 站点勾选不记忆: 每次启动固定只勾选 YouTube
+	for (const auto& s : kSites)
+		CheckDlgButton(s.ctrlId, s.defaultOn ? BST_CHECKED : BST_UNCHECKED);
 	CheckDlgButton(IDC_CHECK_NOPLAYLIST, app->GetProfileInt(kSection, L"NoPlaylist", 1) ? BST_CHECKED : BST_UNCHECKED);
 
 	UpdateButtons();
@@ -367,6 +387,11 @@ void CYtDlpGUIDlg::OnBnClickedSearch()
 	CString q; GetDlgItemText(IDC_EDIT_SEARCH, q);
 	q.Trim(); q.Remove(L'"');
 	if (q.IsEmpty()) { AfxMessageBox(L"请输入搜索关键词。"); return; }
+	{
+		bool any = false;
+		for (const auto& s : kSites) { if (IsDlgButtonChecked(s.ctrlId) == BST_CHECKED) any = true; }
+		if (!any) { AfxMessageBox(L"请至少勾选一个搜索站点。"); return; }
+	}
 	CString exe;
 	if (!CheckYtDlp(exe)) return;
 
@@ -376,7 +401,14 @@ void CYtDlpGUIDlg::OnBnClickedSearch()
 	if (cnt.IsEmpty()) cnt = L"20";
 	CheckDlgButton(IDC_CHECK_ALL, BST_UNCHECKED);
 	CString args = CommonArgs();
-	args += L" --flat-playlist --print \"%(title)s|||%(duration_string)s|||%(url)s\" \"ytsearch" + cnt + L":" + q + L"\"";
+	args += L" --flat-playlist --print \"%(extractor)s|||%(title)s|||%(duration_string)s|||%(url)s\"";
+	for (const auto& s : kSites)
+	{
+		if (IsDlgButtonChecked(s.ctrlId) != BST_CHECKED) continue;
+		CString c = cnt;
+		if (CString(s.prefix) == L"bilisearch" && _wtoi(cnt) > 20) c = L"20";   // B站分页第2页起易触发 412
+		args += L" \"" + CString(s.prefix) + c + L":" + q + L"\"";
+	}
 	SetDlgItemText(IDC_STATIC_STATUS, L"搜索中...");
 	StartProcess(true, exe, args);
 }
@@ -486,17 +518,37 @@ LRESULT CYtDlpGUIDlg::OnAppLog(WPARAM wParam, LPARAM lParam)
 
 	if (lParam == 1)
 	{
+		// extractor|||title|||duration|||url
 		int a = line.Find(L"|||");
 		int b = (a >= 0) ? line.Find(L"|||", a + 3) : -1;
-		if (a >= 0 && b >= 0)
+		int c = (b >= 0) ? line.Find(L"|||", b + 3) : -1;
+		if (a >= 0 && b >= 0 && c >= 0)
 		{
-			int i = m_list.InsertItem(m_list.GetItemCount(), line.Left(a));
-			m_list.SetItemText(i, 1, line.Mid(a + 3, b - a - 3));
-			m_list.SetItemText(i, 2, line.Mid(b + 3));
+			CString src   = SiteDisplayName(line.Left(a));
+			CString title = line.Mid(a + 3, b - a - 3);
+			CString dur   = line.Mid(b + 3, c - b - 3);
+			CString url   = line.Mid(c + 3);
+			if (url.Find(L"bilibili.com/cheese/") >= 0) return 0;   // B站课程页, yt-dlp 无法下载
+			if (dur == L"NA") dur.Empty();
+			if (title.IsEmpty() || title == L"NA")
+			{
+				CString id = url;
+				int slash = id.ReverseFind(L'/');
+				if (slash >= 0) id = id.Mid(slash + 1);
+				int qm = id.Find(L'?');
+				if (qm >= 0) id = id.Left(qm);
+				title = L"[无标题] " + id;
+			}
+			int i = m_list.InsertItem(m_list.GetItemCount(), title);
+			m_list.SetItemText(i, 1, dur);
+			m_list.SetItemText(i, 2, url);
+			m_list.SetItemText(i, 3, src);
 			return 0;
 		}
 	}
 	AppendLog(line);
+	if (lParam == 1 && line.Find(L"HTTP Error 412") >= 0)
+		AppendLog(L"提示：B站触发了访问频率限制（HTTP 412）。请等待几分钟后再试，或在“Cookies”里选择已登录 B站 的浏览器。");
 	if (lParam == 0) ParseProgress(line);
 	return 0;
 }
@@ -517,9 +569,9 @@ LRESULT CYtDlpGUIDlg::OnAppDone(WPARAM wParam, LPARAM lParam)
 	CString st;
 	if (m_stopRequested)
 		st = L"已停止";
-	else if (code == 0)
+	else if (code == 0 || (lParam == 1 && m_list.GetItemCount() > 0))
 	{
-		if (lParam == 1) st.Format(L"搜索完成，共 %d 条结果", m_list.GetItemCount());
+		if (lParam == 1) { st.Format(L"搜索完成，共 %d 条结果", m_list.GetItemCount()); if (code != 0) st += L"（部分站点失败，详见日志）"; }
 		else { st = L"下载完成"; m_progress.SetPos(100); }
 	}
 	else

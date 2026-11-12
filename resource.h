@@ -25,3 +25,6 @@
 
 #define IDC_CHECK_ALL           1021
 #define IDC_COMBO_COUNT         1022
+#define IDC_CHECK_SITE_YT       1030
+#define IDC_CHECK_SITE_BILI     1031
+#define IDC_CHECK_SITE_SC       1032
